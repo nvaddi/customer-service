@@ -1,0 +1,90 @@
+# Build Maven artifacts and publish immutable release versions to GitHub Packages.
+# Release tags may be written as either 1.2.3 or v1.2.3.
+
+name: Maven Package
+
+on:
+  workflow_dispatch:
+    inputs:
+      branch:
+        description: Branch to build
+        required: true
+        type: choice
+        default: master
+        options:
+          - master
+      runner:
+        description: GitHub-hosted runner label
+        required: true
+        type: choice
+        default: ubuntu-latest
+        options:
+          - ubuntu-latest
+          - ubuntu-24.04
+          - ubuntu-22.04
+          - ubuntu-20.04
+  push:
+    branches:
+      - master
+  release:
+    types: [published]
+
+jobs:
+  build:
+    runs-on: ${{ github.event_name == 'workflow_dispatch' && inputs.runner || 'ubuntu-latest' }}
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Check out repository and fetch all branches
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.branch || github.event_name == 'release' && github.event.release.tag_name || github.ref }}
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Fetch and show all branches
+        run: |
+          git fetch --all --prune --tags
+          echo 'Available branches:'
+          git branch --all
+
+      - name: Show selected runner labels
+        run: |
+          echo "Selected runner label: ${{ runner.os }} / ${{ runner.arch }}"
+          echo "Runner name: ${{ runner.name }}"
+          echo "Requested label: ${{ github.event_name == 'workflow_dispatch' && inputs.runner || 'ubuntu-latest' }}"
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+          cache: maven
+          server-id: github
+          settings-path: ${{ github.workspace }}
+
+      - name: Set release version
+        if: github.event_name == 'release'
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          VERSION="${RELEASE_TAG#v}"
+          if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]; then
+            echo "Release tag '$RELEASE_TAG' is not a supported Maven version. Use a tag such as v1.2.3 or 1.2.3."
+            exit 1
+          fi
+          mvn --batch-mode versions:set \
+            -DnewVersion="$VERSION" \
+            -DgenerateBackupPoms=false
+          echo "Publishing Maven version $VERSION"
+
+      - name: Build with Maven
+        run: mvn --batch-mode package --file pom.xml
+
+      - name: Publish release to GitHub Packages
+        if: github.event_name == 'release'
+        run: mvn --batch-mode deploy -s "$GITHUB_WORKSPACE/settings.xml" --file pom.xml
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
