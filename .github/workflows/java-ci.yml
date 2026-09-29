@@ -7,10 +7,10 @@ on:
         description: Select the branch to test
         type: choice
         required: true
-        default: master
+        default: main
         options:
-          - master
-          - test-branch
+          - main
+
       runner:
         description: Select the runner label
         type: choice
